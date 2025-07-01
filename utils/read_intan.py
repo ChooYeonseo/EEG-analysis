@@ -392,7 +392,7 @@ def resample_dataframe(df, original_rate, target_rate):
     return pd.DataFrame(resampled_data)
 
 
-def dataframe_to_numpy(df, save_path=None, file_format='npz'):
+def dataframe_to_numpy(df, save_path=None, file_format='npz', use_pin_names=True):
     """
     Convert DataFrame to numpy arrays and optionally save to file.
     
@@ -404,6 +404,8 @@ def dataframe_to_numpy(df, save_path=None, file_format='npz'):
         Path to save the numpy data (without extension)
     file_format : str, optional
         Format to save: 'npz' (compressed), 'npy' (single array), or 'csv'
+    use_pin_names : bool, optional
+        If True, convert channel names to pin names (e.g., 'B-008' -> 'pin_4')
         
     Returns:
     --------
@@ -412,10 +414,17 @@ def dataframe_to_numpy(df, save_path=None, file_format='npz'):
     """
     print(f"Converting DataFrame to numpy arrays...")
     
+    # Convert channel names to pin names if requested
+    if use_pin_names:
+        print("Converting channel names to pin names...")
+        df_to_save = convert_channels_to_pins(df)
+    else:
+        df_to_save = df
+    
     # Convert DataFrame to dictionary of numpy arrays
     numpy_data = {}
-    for column in df.columns:
-        numpy_data[column] = df[column].values
+    for column in df_to_save.columns:
+        numpy_data[column] = df_to_save[column].values
         print(f"  - {column}: shape {numpy_data[column].shape}, dtype {numpy_data[column].dtype}")
     
     # Save to file if path is provided
@@ -436,7 +445,7 @@ def dataframe_to_numpy(df, save_path=None, file_format='npz'):
         elif file_format.lower() == 'csv':
             # Save as CSV (less efficient but human readable)
             csv_path = f"{save_path}.csv"
-            df.to_csv(csv_path, index=False)
+            df_to_save.to_csv(csv_path, index=False)
             print(f"✓ Saved as CSV: {csv_path}")
             
         else:
@@ -513,7 +522,7 @@ def numpy_to_dataframe(numpy_data):
     return df
 
 
-def save_experiment_numpy(folder_path, output_dir, channel_names=None, resample_rate=None):
+def save_experiment_numpy(folder_path, output_dir, channel_names=None, resample_rate=None, use_pin_names=True):
     """
     Process RHD folder and save as numpy arrays in one step.
     
@@ -527,6 +536,8 @@ def save_experiment_numpy(folder_path, output_dir, channel_names=None, resample_
         List of specific channel names to include
     resample_rate : float, optional
         If provided, resample the data to this rate (in Hz)
+    use_pin_names : bool, optional
+        If True, convert channel names to pin names (e.g., 'B-008' -> 'pin_4')
         
     Returns:
     --------
@@ -549,7 +560,7 @@ def save_experiment_numpy(folder_path, output_dir, channel_names=None, resample_
     # Save as numpy
     print("\nStep 2: Converting to numpy and saving...")
     numpy_path = os.path.join(output_dir, base_name)
-    numpy_data = dataframe_to_numpy(df, save_path=numpy_path, file_format='npz')
+    numpy_data = dataframe_to_numpy(df, save_path=numpy_path, file_format='npz', use_pin_names=use_pin_names)
     
     # Save metadata as JSON
     import json
@@ -564,6 +575,11 @@ def save_experiment_numpy(folder_path, output_dir, channel_names=None, resample_
             metadata_json[key] = value.item()
         else:
             metadata_json[key] = value
+    
+    # Add pin mapping information to metadata
+    if use_pin_names:
+        metadata_json['pin_mapping'] = get_channel_mapping()
+        metadata_json['channel_to_pin_conversion'] = True
     
     with open(metadata_path, 'w') as f:
         json.dump(metadata_json, f, indent=2)
@@ -582,6 +598,8 @@ def save_experiment_numpy(folder_path, output_dir, channel_names=None, resample_
     print(f"   - Metadata: {output_paths['metadata']}")
     print(f"   - Shape: {output_paths['dataframe_shape']}")
     print(f"   - Duration: {output_paths['total_duration']:.2f} seconds")
+    if use_pin_names:
+        print(f"   - Channel names converted to pin names")
     
     return output_paths
 
@@ -639,6 +657,89 @@ def get_channel_mapping():
     }
 
 
+def get_intan_to_pin_mapping():
+    """
+    Get the reverse mapping from Intan input names to pin numbers.
+    
+    Returns:
+    --------
+    mapping : dict
+        Dictionary mapping Intan input names to pin numbers
+    """
+    pin_to_intan = get_channel_mapping()
+    return {intan_name: pin for pin, intan_name in pin_to_intan.items()}
+
+
+def channel_name_to_pin(channel_name):
+    """
+    Convert a channel name (e.g., 'B-008', 'C-021') to pin number (e.g., 'pin_4', 'pin_7').
+    
+    Parameters:
+    -----------
+    channel_name : str
+        Original channel name like 'B-008', 'C-021', etc.
+        
+    Returns:
+    --------
+    pin_name : str
+        Pin name like 'pin_4', 'pin_7', or original name if no mapping found
+    """
+    # Extract the number part from channel name (e.g., '008' from 'B-008')
+    import re
+    match = re.search(r'(\d{3})$', channel_name)
+    if not match:
+        return channel_name  # Return original if no number found
+    
+    number_part = match.group(1)
+    # Convert '008' to 'in8', '011' to 'in11', '021' to 'in21', etc.
+    # Remove leading zeros from the number part
+    intan_number = str(int(number_part))
+    intan_name = f'in{intan_number}'
+    
+    # Get the mapping from intan names to pin numbers
+    intan_to_pin = get_intan_to_pin_mapping()
+    
+    if intan_name in intan_to_pin:
+        pin_number = intan_to_pin[intan_name]
+        return f'pin_{pin_number}'
+    else:
+        # If no mapping found, return original name
+        print(f"Warning: No pin mapping found for {channel_name} ({intan_name})")
+        return channel_name
+
+
+def convert_channels_to_pins(df):
+    """
+    Convert DataFrame column names from channel names to pin names.
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        DataFrame with channel names as columns
+        
+    Returns:
+    --------
+    df_pins : pandas.DataFrame
+        DataFrame with pin names as columns
+    """
+    df_copy = df.copy()
+    
+    # Create mapping for column renaming
+    column_mapping = {}
+    for col in df.columns:
+        if col == 'time':
+            column_mapping[col] = col  # Keep time column as is
+        else:
+            pin_name = channel_name_to_pin(col)
+            column_mapping[col] = pin_name
+            if pin_name != col:
+                print(f"Mapped {col} -> {pin_name}")
+    
+    # Rename columns
+    df_copy.rename(columns=column_mapping, inplace=True)
+    return df_copy
+
+
 # Example usage
 if __name__ == "__main__":
     print("RHD Reader Module")
@@ -649,22 +750,27 @@ if __name__ == "__main__":
     print("- print_file_info(result)")
     print("- load_experiment_data(experiment_dir)")
     print("- rhd_folder_to_dataframe(folder_path, channel_names, resample_rate)")
-    print("- dataframe_to_numpy(df, save_path, file_format)")
+    print("- dataframe_to_numpy(df, save_path, file_format, use_pin_names)")
     print("- load_numpy_data(file_path)")
-    print("- save_experiment_numpy(folder_path, output_dir)")
+    print("- save_experiment_numpy(folder_path, output_dir, use_pin_names)")
     print("- load_experiment_numpy(numpy_file_path, metadata_file_path)")
     print("- get_channel_mapping()")
+    print("- channel_name_to_pin(channel_name)")
+    print("- convert_channels_to_pins(df)")
     
     # Example usage for DataFrame creation
     print("\nExample usage:")
     print("# Basic DataFrame creation:")
     print("df, metadata = rhd_folder_to_dataframe('data/intan/attempt1/d0_1')")
     
-    print("\n# Convert to numpy and save:")
-    print("numpy_data = dataframe_to_numpy(df, 'output/my_data', 'npz')")
+    print("\n# Convert to numpy and save with pin names:")
+    print("numpy_data = dataframe_to_numpy(df, 'output/my_data', 'npz', use_pin_names=True)")
     
-    print("\n# One-step RHD to numpy conversion:")
-    print("output_paths = save_experiment_numpy('data/intan/attempt1/d0_1', 'output')")
+    print("\n# One-step RHD to numpy conversion with pin names:")
+    print("output_paths = save_experiment_numpy('data/intan/attempt1/d0_1', 'output', use_pin_names=True)")
+    
+    print("\n# Channel name to pin conversion:")
+    print("pin_name = channel_name_to_pin('B-008')  # Returns 'pin_4'")
     
     print("\n# Load saved numpy data:")
     print("df_loaded, metadata = load_experiment_numpy('output/eeg_data_d0_1.npz', 'output/eeg_data_d0_1_metadata.json')")

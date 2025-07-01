@@ -1,4 +1,4 @@
 # Data folder - contains large EEG files and video files
 data/
-# Allow sample data to be included in repository
+# Allow compressed data to be included in repository
 !data/compressed/
