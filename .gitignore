@@ -2,3 +2,8 @@
 data/
 # Allow compressed data to be included in repository
 !data/compressed/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
