@@ -245,7 +245,6 @@ def rhd_folder_to_dataframe(folder_path, channel_names=None, resample_rate=None)
         if not data_present:
             print(f"Skipping {filename} - no data present")
             continue
-        
         try:
             # Get sample rate and recording duration
             sample_rate = result.get('sample_rate', 20000)  # Default to 20kHz if not found
@@ -273,14 +272,7 @@ def rhd_folder_to_dataframe(folder_path, channel_names=None, resample_rate=None)
                         break
                 
                 if channel_index is not None and channel_index < amplifier_data.shape[0]:
-                    # Convert from microvolts to volts if needed
-                    channel_data = amplifier_data[channel_index, :]
-                    # Apply conversion factor (typically 0.195 microvolts per bit for Intan)
-                    if 'amplifier_channels' in result and channel_index < len(result['amplifier_channels']):
-                        bit_to_uv = result['amplifier_channels'][channel_index].get('bit_to_uv_factor', 0.195)
-                        channel_data = channel_data * bit_to_uv  # Convert to microvolts
-                    
-                    file_data[channel_name] = channel_data
+                    file_data[channel_name] = amplifier_data[channel_index, :]
                 else:
                     print(f"Warning: Channel {channel_name} not found in {filename}")
                     file_data[channel_name] = np.full(num_samples, np.nan)
@@ -392,7 +384,7 @@ def resample_dataframe(df, original_rate, target_rate):
     return pd.DataFrame(resampled_data)
 
 
-def dataframe_to_numpy(df, save_path=None, file_format='npz', use_pin_names=True):
+def dataframe_to_numpy(df, save_path=None, file_format='npz', pin_map=None, use_pin_names=True):
     """
     Convert DataFrame to numpy arrays and optionally save to file.
     
@@ -417,7 +409,7 @@ def dataframe_to_numpy(df, save_path=None, file_format='npz', use_pin_names=True
     # Convert channel names to pin names if requested
     if use_pin_names:
         print("Converting channel names to pin names...")
-        df_to_save = convert_channels_to_pins(df)
+        df_to_save = convert_channels_to_pins(df, pin_map)
     else:
         df_to_save = df
     
@@ -522,7 +514,7 @@ def numpy_to_dataframe(numpy_data):
     return df
 
 
-def save_experiment_numpy(folder_path, output_dir, channel_names=None, resample_rate=None, use_pin_names=True):
+def save_experiment_numpy(folder_path, output_dir, channel_names=None, resample_rate=None, pin_map=None, use_pin_names=True):
     """
     Process RHD folder and save as numpy arrays in one step.
     
@@ -578,7 +570,7 @@ def save_experiment_numpy(folder_path, output_dir, channel_names=None, resample_
     
     # Add pin mapping information to metadata
     if use_pin_names:
-        metadata_json['pin_mapping'] = get_channel_mapping()
+        metadata_json['pin_mapping'] = get_channel_mapping(pin_map)
         metadata_json['channel_to_pin_conversion'] = True
     
     with open(metadata_path, 'w') as f:
@@ -640,7 +632,7 @@ def load_experiment_numpy(numpy_file_path, metadata_file_path=None):
     return df, metadata
 
 
-def get_channel_mapping():
+def get_channel_mapping(pin_map=None):
     """
     Get the pin-to-channel mapping based on your device configuration.
     
@@ -649,15 +641,17 @@ def get_channel_mapping():
     mapping : dict
         Dictionary mapping pin numbers to Intan input names
     """
-    return {
-        1: 'in11', 2: 'in10', 3: 'in9', 4: 'in8',
-        5: 'in23', 6: 'in22', 7: 'in21', 8: 'in20',
-        9: 'in12', 10: 'in13', 11: 'in14', 12: 'in15',
-        13: 'in16', 14: 'in17', 15: 'in18', 16: 'in19'
-    }
+    if pin_map is None:
+        pin_map = {
+            1: 'in11', 2: 'in10', 3: 'in9', 4: 'in8',
+            5: 'in23', 6: 'in22', 7: 'in21', 8: 'in20',
+            9: 'in12', 10: 'in13', 11: 'in14', 12: 'in15',
+            13: 'in16', 14: 'in17', 15: 'in18', 16: 'in19'
+        }
+    return pin_map
 
 
-def get_intan_to_pin_mapping():
+def get_intan_to_pin_mapping(pin_map=None):
     """
     Get the reverse mapping from Intan input names to pin numbers.
     
@@ -666,11 +660,11 @@ def get_intan_to_pin_mapping():
     mapping : dict
         Dictionary mapping Intan input names to pin numbers
     """
-    pin_to_intan = get_channel_mapping()
+    pin_to_intan = get_channel_mapping(pin_map)
     return {intan_name: pin for pin, intan_name in pin_to_intan.items()}
 
 
-def channel_name_to_pin(channel_name):
+def channel_name_to_pin(channel_name, pin_map=None):
     """
     Convert a channel name (e.g., 'B-008', 'C-021') to pin number (e.g., 'pin_4', 'pin_7').
     
@@ -697,7 +691,7 @@ def channel_name_to_pin(channel_name):
     intan_name = f'in{intan_number}'
     
     # Get the mapping from intan names to pin numbers
-    intan_to_pin = get_intan_to_pin_mapping()
+    intan_to_pin = get_intan_to_pin_mapping(pin_map)
     
     if intan_name in intan_to_pin:
         pin_number = intan_to_pin[intan_name]
@@ -708,7 +702,7 @@ def channel_name_to_pin(channel_name):
         return channel_name
 
 
-def convert_channels_to_pins(df):
+def convert_channels_to_pins(df, pin_map=None):
     """
     Convert DataFrame column names from channel names to pin names.
     
@@ -730,7 +724,7 @@ def convert_channels_to_pins(df):
         if col == 'time':
             column_mapping[col] = col  # Keep time column as is
         else:
-            pin_name = channel_name_to_pin(col)
+            pin_name = channel_name_to_pin(col, pin_map)
             column_mapping[col] = pin_name
             if pin_name != col:
                 print(f"Mapped {col} -> {pin_name}")
