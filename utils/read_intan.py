@@ -648,6 +648,7 @@ def get_channel_mapping(pin_map=None):
             9: 'in12', 10: 'in13', 11: 'in14', 12: 'in15',
             13: 'in16', 14: 'in17', 15: 'in18', 16: 'in19'
         }
+    
     return pin_map
 
 
