@@ -5,8 +5,10 @@ This module provides functions for filtering, artifact removal, and signal condi
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
+
 import scipy.signal as signal
-from scipy.signal import butter, filtfilt, iirnotch, sosfilt
+from scipy.signal import butter, filtfilt, iirnotch, sosfilt, sosfiltfilt
 from scipy.signal.windows import get_window
 from scipy.signal import hilbert
 from scipy.stats import kurtosis
@@ -40,8 +42,8 @@ def get_sampling_rate(data):
 
 def bandpass_filter(data, lowcut, highcut, fs=None, order=4):
     """
-    Apply bandpass filter to EEG data.
-    
+    Apply zero-phase bandpass filter to EEG data using Butterworth filter.
+
     Parameters:
     -----------
     data : pandas.DataFrame
@@ -54,33 +56,28 @@ def bandpass_filter(data, lowcut, highcut, fs=None, order=4):
         Sampling rate (Hz). If None, estimated from data
     order : int
         Filter order
-        
+
     Returns:
     --------
     filtered_data : pandas.DataFrame
-        Filtered data
+        Filtered data with same structure
     """
     if fs is None:
         fs = get_sampling_rate(data)
-    
-    # Nyquist frequency
+
     nyquist = fs / 2
-    
-    # Normalize frequencies
     low = lowcut / nyquist
     high = highcut / nyquist
-    
-    # Design filter
+
     sos = butter(order, [low, high], btype='bandpass', output='sos')
-    
-    # Apply filter to each channel (except time)
+
     filtered_data = data.copy()
-    
+
     for column in data.columns:
         if column != 'time':
-            filtered_data[column] = sosfilt(sos, data[column].values)
-    
-    print(f"Applied bandpass filter: {lowcut}-{highcut} Hz")
+            filtered_data[column] = sosfiltfilt(sos, data[column].values)  # <-- 변경!
+
+    print(f"Applied zero-phase bandpass filter: {lowcut}-{highcut} Hz")
     return filtered_data
 
 def lowpass_filter(data, cutoff, fs=None, order=4):
@@ -353,7 +350,6 @@ def interpolate_nans_polynomial(arr, order=3):
     arr[np.isnan(arr)] = poly(x[np.isnan(arr)])
     return arr
 
-
 def remove_artifacts_chunk(sig, fs, env_threshold=5, kurtosis_threshold=3):
     output = sig.copy()
     # 힐버트 앰플리튜드 기반 절대 임계치
@@ -371,12 +367,11 @@ def remove_artifacts_chunk(sig, fs, env_threshold=5, kurtosis_threshold=3):
 
     combined_mask = mask_env & mask_k
     artifacts_removed = np.sum(~combined_mask)
-    print(f"Masked {artifacts_removed} artifact samples in {artifacts_removed/len(sig)*100:.5f}%)")
+    # print(f"Masked {artifacts_removed} artifact samples in {artifacts_removed/len(sig)*100:.5f}%)")
 
     output[~combined_mask] = np.nan
 
     return output
-
 
 def remove_artifacts_hilbert_kurtosis(data, fs=None, env_threshold=5, kurtosis_threshold=3, 
                                     window_size=2.0, step_size=1.0, interpolate=True):
@@ -426,7 +421,7 @@ def remove_artifacts_hilbert_kurtosis(data, fs=None, env_threshold=5, kurtosis_t
         if column != 'time':
             sig = data[column].values
             cleaned_sig = sig.copy()
-            for start_sample in np.arange(0, file_len-window_samples+step_samples, step_samples):
+            for start_sample in tqdm(np.arange(0, file_len-window_samples+step_samples, step_samples)):
                 s_idx = start_sample
                 e_idx = start_sample + window_samples
                 chunk = sig[s_idx:e_idx]
@@ -719,8 +714,6 @@ def preprocess_eeg_data(data,
     print("test")
     
     return processed_data, processed_path
-
-
 # Preset configurations for common EEG analysis
 def preprocess_for_general_analysis(data, fs=None, artifact_method='hilbert_kurtosis', 
                                    window_size=2.0, step_size=1.0, interpolate_immediately=True,
@@ -750,7 +743,6 @@ def preprocess_for_general_analysis(data, fs=None, artifact_method='hilbert_kurt
         original_npz_path=original_npz_path,
         force_overwrite=force_overwrite
     )
-
 
 def preprocess_for_seizure_detection(data, fs=None, artifact_method='hilbert_kurtosis', 
                                     window_size=2.0, step_size=1.0, interpolate_immediately=True,
@@ -783,7 +775,6 @@ def preprocess_for_seizure_detection(data, fs=None, artifact_method='hilbert_kur
         force_overwrite=force_overwrite
     )
 
-
 def preprocess_for_spectral_analysis(data, fs=None, save_npz=False, original_npz_path=None, force_overwrite=False):
     """
     Preset for spectral/frequency analysis.
@@ -807,7 +798,6 @@ def preprocess_for_spectral_analysis(data, fs=None, save_npz=False, original_npz
         original_npz_path=original_npz_path,
         force_overwrite=force_overwrite
     )
-
 
 def save_processed_data_npz(processed_data, original_npz_path, fs=None, preprocessing_info=None):
     """
@@ -959,7 +949,6 @@ def save_processed_data_npz_force(processed_data, original_npz_path, fs=None, pr
     
     return str(output_path)
 
-
 def load_processed_data_npz(npz_path):
     """
     Load processed EEG data from NPZ file.
@@ -1012,7 +1001,6 @@ def load_processed_data_npz(npz_path):
     
     return data, full_metadata
 
-# Example usage
 if __name__ == "__main__":
     print("EEG Signal Preprocessing Module")
     print("\nAvailable functions:")
