@@ -1,7 +1,20 @@
-# Data folder - contains large EEG files and video files
-data/
-# Allow compressed data to be included in repository
+# Ignore all contents inside the 'data' directory
+data/*
+
+# But, do not ignore the 'compressed' subdirectory itself
 !data/compressed/
+
+# Now, ignore all contents within that 'compressed' subdirectory
+data/compressed/*
+
+# But don't ignore subdirectories themselves
+!data/compressed/*/
+
+# Then ignore everything in those subdirectories
+data/compressed/*/*
+
+# Finally, UN-ignore any .npz file containing the phrase "processed"
+!data/compressed/**/*processed*.npz
 
 # Python cache files
 __pycache__/

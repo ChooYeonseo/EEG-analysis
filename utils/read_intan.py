@@ -9,6 +9,8 @@ import glob
 from pathlib import Path
 import pandas as pd
 import numpy as np
+from tqdm import tqdm
+
 
 # Add the load-rhd-notebook-python directory to the Python path
 current_dir = Path(__file__).parent
@@ -22,6 +24,26 @@ try:
 except ImportError as e:
     print(f"Error importing RHD utilities: {e}")
     raise
+
+def get_sample_rate(result):
+    """
+    Get the sample rate from the result dictionary.
+    
+    Parameters:
+    -----------
+    result : dict
+        Result dictionary from load_file()
+        
+    Returns:
+    --------
+    sample_rate : float
+        Sample rate in Hz
+    """
+    if 'frequency_parameters' in result and 'amplifier_sample_rate' in result['frequency_parameters']:
+        return int(result['frequency_parameters']['amplifier_sample_rate'])
+    else:
+        print("Sample rate not found in result")
+        return None
 
 
 def read_rhd_file(file_path):
@@ -182,7 +204,16 @@ def load_experiment_data(experiment_dir):
     return read_rhd_directory(full_path)
 
 
-def rhd_folder_to_dataframe(folder_path, channel_names=None, resample_rate=None):
+def rhd_folder_to_dataframe(folder_path, 
+                            channel_names=None, 
+                            resample_rate=None,
+                            hk=True, 
+                            hk_params={"env_threshold": 5,
+                                       "kurtosis_threshold":3,
+                                       "window_size":2.0,  # 1 second window
+                                       "step_size":1,    # 0.5 second step
+                                       "interpolate":True},
+                            interpolate=True):
     """
     Convert all RHD files in a folder to a single pandas DataFrame.
     
@@ -247,7 +278,7 @@ def rhd_folder_to_dataframe(folder_path, channel_names=None, resample_rate=None)
             continue
         try:
             # Get sample rate and recording duration
-            sample_rate = result.get('sample_rate', 20000)  # Default to 20kHz if not found
+            sample_rate = get_sample_rate(result)
             
             # Get amplifier data
             if 'amplifier_data' not in result:
@@ -322,6 +353,20 @@ def rhd_folder_to_dataframe(folder_path, channel_names=None, resample_rate=None)
     
     # Create DataFrame
     df = pd.DataFrame(combined_data)
+
+    if hk:
+        # Apply Hilbert-Kurtosis artifact removal if requested
+        print("Applying Hilbert-Kurtosis artifact removal...")
+        from utils.signal_preprocessing import remove_artifacts_hilbert_kurtosis
+        df = remove_artifacts_hilbert_kurtosis(
+            df, 
+            fs=sample_rate, 
+            env_threshold=hk_params['env_threshold'], 
+            kurtosis_threshold=hk_params['kurtosis_threshold'],
+            window_size=1.0,  # 1 second window
+            step_size=0.5,    # 0.5 second step
+            interpolate=interpolate  # Interpolate immediately
+        )
     
     # Resample if requested
     if resample_rate is not None and resample_rate != sample_rate:
@@ -375,7 +420,7 @@ def resample_dataframe(df, original_rate, target_rate):
     # Resample each channel
     resampled_data = {'time': new_time}
     
-    for column in df.columns:
+    for column in tqdm(df.columns):
         if column != 'time':
             # Use scipy's resample function
             resampled_channel = signal.resample(df[column].values, new_length)
@@ -514,7 +559,19 @@ def numpy_to_dataframe(numpy_data):
     return df
 
 
-def save_experiment_numpy(folder_path, output_dir, channel_names=None, resample_rate=None, pin_map=None, use_pin_names=True):
+def save_experiment_numpy(folder_path, 
+                          output_dir, 
+                          channel_names=None, 
+                          resample_rate=None, 
+                          pin_map=None, 
+                          use_pin_names=True, 
+                          hk=True, 
+                          hk_params={"env_threshold": 5,
+                                       "kurtosis_threshold":3,
+                                       "window_size":2,  # 1 second window
+                                       "step_size":1,    # 0.5 second step
+                                       "interpolate":True},
+                          interpolate=True):
     """
     Process RHD folder and save as numpy arrays in one step.
     
@@ -543,7 +600,12 @@ def save_experiment_numpy(folder_path, output_dir, channel_names=None, resample_
     
     # Convert RHD to DataFrame
     print("Step 1: Converting RHD files to DataFrame...")
-    df, metadata = rhd_folder_to_dataframe(folder_path, channel_names, resample_rate)
+    df, metadata = rhd_folder_to_dataframe(folder_path, 
+                                           channel_names=channel_names, 
+                                           resample_rate=resample_rate, 
+                                           hk=hk, 
+                                           hk_params=hk_params,
+                                           interpolate=interpolate)
     
     # Generate output file name based on folder
     folder_name = os.path.basename(os.path.abspath(folder_path))
