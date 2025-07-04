@@ -860,3 +860,589 @@ class EnhancedEEGChunkPlotter:
         self.update_plot()
         self.show_help()
         plt.show()
+
+def plot_differential_scaled_7uv_per_mm(data, start_time, end_time, groups, 
+                                        figsize_inches=(15, 10), dpi=100,
+                                        apply_filter=False, lowcut=0.5, highcut=70.0, 
+                                        filter_type='butterworth', sampling_rate=1000):
+    """
+    Plot differential EEG signals with precise scaling: 7µV = 1mm on screen.
+    Each group gets its own subplot with differential pairs spaced 1cm apart within the subplot.
+    
+    Parameters:
+    -----------
+    data : pandas.DataFrame
+        EEG 데이터 (time 컬럼과 pin 컬럼들 포함)
+    start_time : float
+        시작 시간 (초)
+    end_time : float  
+        종료 시간 (초)
+    groups : dict
+        Dictionary with group names as keys and list of (pin1, pin2) tuples as values
+        Example: {'group1': [(4,1), (1,5)], 'group2': [(4,2), (2,3)]}
+    figsize_inches : tuple
+        Figure size in inches (width, height)
+    dpi : int
+        Dots per inch for the figure
+    apply_filter : bool
+        Whether to apply bandpass filter before plotting (default: False)
+    lowcut : float
+        Low cutoff frequency for bandpass filter in Hz (default: 0.5)
+    highcut : float
+        High cutoff frequency for bandpass filter in Hz (default: 70.0)
+    filter_type : str
+        Filter type: 'butterworth', 'elliptic', 'chebyshev1', 'chebyshev2' (default: 'butterworth')
+    sampling_rate : float
+        Sampling rate in Hz (default: 1000)
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    # Apply bandpass filter if requested
+    if apply_filter:
+        print(f"🔧 Applying {filter_type} bandpass filter: {lowcut}-{highcut} Hz")
+        filtered_data = apply_bandpass_filter(data, lowcut, highcut, 
+                                            fs=sampling_rate, filter_type=filter_type)
+    else:
+        filtered_data = data
+    
+    # Calculate mm to µV conversion
+    # 1mm on screen = 7µV
+    uv_per_mm = 7.0
+    
+    # Calculate vertical spacing for differential pairs within each group (1cm = 10mm)
+    pair_spacing_mm = 10.0  # 1cm in mm
+    pair_spacing_uv = pair_spacing_mm * uv_per_mm  # Convert to µV units
+    
+    # Filter data for time range
+    time_mask = (filtered_data['time'] >= start_time) & (filtered_data['time'] <= end_time)
+    plot_data = filtered_data[time_mask].copy()
+    
+    if len(plot_data) == 0:
+        print(f"No data found in time range {start_time}-{end_time} seconds")
+        return
+    
+    # Calculate subplot layout
+    n_groups = len(groups)
+    
+    # Adjust figure height based on number of groups
+    subplot_height = figsize_inches[1] / n_groups if n_groups > 1 else figsize_inches[1]
+    
+    # Create subplots - one for each group
+    fig, axes = plt.subplots(n_groups, 1, figsize=figsize_inches, dpi=dpi, sharex=True)
+    
+    # Ensure axes is always a list
+    if n_groups == 1:
+        axes = [axes]
+    
+    # Color palette for different signals within groups
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
+              '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+    
+    # Process each group in its own subplot
+    for group_idx, (group_name, pin_pairs) in enumerate(groups.items()):
+        ax = axes[group_idx]
+        
+        # Track y-axis limits for this subplot
+        y_min_subplot = float('inf')
+        y_max_subplot = float('-inf')
+        
+        # Calculate vertical positions for differential pairs within this group
+        n_pairs = len(pin_pairs)
+        center_offset = (n_pairs - 1) * pair_spacing_uv / 2
+        
+        print(f"Plotting group '{group_name}' with {n_pairs} differential pairs")
+        
+        # Plot each differential pair in the group
+        for pair_idx, (pin1, pin2) in enumerate(pin_pairs):
+            pin1_name = f'pin_{pin1}'
+            pin2_name = f'pin_{pin2}'
+            
+            # Check if pins exist in data
+            if pin1_name in plot_data.columns and pin2_name in plot_data.columns:
+                # Calculate differential signal
+                diff_signal = plot_data[pin1_name] - plot_data[pin2_name]
+                
+                # Calculate vertical offset for this pair (1cm spacing)
+                pair_offset = pair_idx * pair_spacing_uv - center_offset
+                offset_signal = diff_signal + pair_offset
+                
+                # Select color
+                color = colors[pair_idx % len(colors)]
+                
+                # Plot the signal
+                ax.plot(plot_data['time'], offset_signal, 
+                       linewidth=1.2, color=color, 
+                       label=f'{pin1_name}-{pin2_name}', 
+                       alpha=0.8)
+                
+                # Update subplot y limits
+                y_min_subplot = min(y_min_subplot, offset_signal.min())
+                y_max_subplot = max(y_max_subplot, offset_signal.max())
+                
+                # Add zero line for this differential pair
+                ax.axhline(y=pair_offset, color='gray', linestyle='--', 
+                          alpha=0.4, linewidth=0.8)
+                
+            else:
+                print(f"Warning: Pins {pin1_name} or {pin2_name} not found in data")
+        
+        # Configure this subplot
+        ax.set_ylabel(f'{group_name}\nDifferential (7µV = 1mm)', fontsize=10, fontweight='bold')
+        ax.set_title(f'Group: {group_name}', fontsize=11, fontweight='bold')
+        
+        # Ensure time axis fills the graph completely
+        ax.set_xlim(start_time, end_time)
+        
+        # Set y-axis limits with padding
+        if y_min_subplot != float('inf') and y_max_subplot != float('-inf'):
+            y_range = y_max_subplot - y_min_subplot
+            padding = max(y_range * 0.05, uv_per_mm)  # At least 1mm padding
+            ax.set_ylim(y_min_subplot - padding, y_max_subplot + padding)
+            
+            # Create custom y-axis ticks based on 7µV = 1mm scale
+            tick_spacing_uv = uv_per_mm  # 7µV per tick
+            
+            # Find appropriate tick range for this subplot
+            y_tick_start = np.floor((y_min_subplot - padding) / tick_spacing_uv) * tick_spacing_uv
+            y_tick_end = np.ceil((y_max_subplot + padding) / tick_spacing_uv) * tick_spacing_uv
+            
+            y_ticks = np.arange(y_tick_start, y_tick_end + tick_spacing_uv, tick_spacing_uv)
+            
+            ax.set_yticks(y_ticks)
+            
+            # Create custom y-tick labels showing both µV and mm
+            y_tick_labels = []
+            for tick in y_ticks:
+                mm_value = tick / uv_per_mm
+                y_tick_labels.append(f'{tick:.0f}µV\\n({mm_value:.1f}mm)')
+            
+            ax.set_yticklabels(y_tick_labels, fontsize=8)
+        
+        # Add grid and styling
+        ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+        ax.set_facecolor('#fafafa')
+        
+        # Add legend for this subplot
+        ax.legend(loc='upper right', fontsize=8)
+    
+    # Set x-axis label only on the bottom subplot
+    axes[-1].set_xlabel('Time (s)', fontsize=12, fontweight='bold')
+    
+    # Add overall title
+    filter_info = f" | Filtered: {lowcut}-{highcut}Hz ({filter_type})" if apply_filter else ""
+    title = (f'Differential EEG Signals by Groups ({start_time:.1f}-{end_time:.1f}s){filter_info}\\n'
+            f'Scale: 7µV = 1mm | Differential pairs spaced 1cm apart within each group')
+    
+    fig.suptitle(title, fontsize=14, fontweight='bold')
+    
+    # Add scaling information box on the first subplot
+    filter_text = f'🔧 Filter: {lowcut}-{highcut}Hz ({filter_type})\\n' if apply_filter else ''
+    info_text = (f'📏 Scaling: 7µV = 1mm\\n'
+                f'{filter_text}'
+                f'📊 Duration: {end_time-start_time:.1f}s\\n'
+                f'🔗 Groups: {len(groups)}\\n'
+                f'📈 Pairs: {sum(len(pairs) for pairs in groups.values())}')
+    
+    axes[0].text(0.02, 0.98, info_text, transform=axes[0].transAxes,
+                fontsize=9, verticalalignment='top',
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='lightblue', alpha=0.8))
+    
+    # Adjust layout
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.90)
+    
+    # Show the plot
+    plt.show()
+    
+    # Print summary information
+    filter_summary = f" with {filter_type} filter ({lowcut}-{highcut}Hz)" if apply_filter else ""
+    print(f"\\n📊 Plot Summary{filter_summary}:")
+    print(f"   Time range: {start_time:.1f} - {end_time:.1f} seconds ({end_time-start_time:.1f}s duration)")
+    print(f"   Groups plotted: {len(groups)} (each in separate subplot)")
+    print(f"   Total differential pairs: {sum(len(pairs) for pairs in groups.values())}")
+    print(f"   Scaling: 7µV = 1mm")
+    if apply_filter:
+        print(f"   Filter applied: {filter_type} bandpass {lowcut}-{highcut}Hz")
+    print(f"   Differential pair spacing within groups: 1cm ({pair_spacing_uv}µV)")
+    for group_name, pairs in groups.items():
+        print(f"   • {group_name}: {len(pairs)} differential pairs")
+
+
+class DifferentialPlotter7uvPerMm:
+    """
+    Specialized plotter for differential signals with 7µV = 1mm scaling.
+    Each group gets its own subplot with differential pairs spaced 1cm apart.
+    Includes bandpass filtering capabilities.
+    """
+    
+    def __init__(self, data, figsize_inches=(15, 10), dpi=100, sampling_rate=1000):
+        self.data = data
+        self.figsize_inches = figsize_inches
+        self.dpi = dpi
+        self.sampling_rate = sampling_rate
+        self.uv_per_mm = 7.0
+        self.pair_spacing_mm = 10.0  # 1cm
+        self.pair_spacing_uv = self.pair_spacing_mm * self.uv_per_mm
+        
+        # Filter settings
+        self.filter_applied = True
+        self.filter_params = {}
+        
+        # Color palette
+        self.colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
+                      '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+    
+    def apply_filter(self, lowcut, highcut, filter_type='butterworth', order=4):
+        """
+        Apply bandpass filter to the data.
+        
+        Parameters:
+        -----------
+        lowcut : float
+            Low cutoff frequency in Hz
+        highcut : float
+            High cutoff frequency in Hz
+        filter_type : str
+            Filter type: 'butterworth', 'elliptic', 'chebyshev1', 'chebyshev2'
+        order : int
+            Filter order
+        """
+        print(f"🔧 Applying {filter_type} bandpass filter: {lowcut}-{highcut} Hz")
+        self.data = apply_bandpass_filter(self.data, lowcut, highcut, 
+                                        fs=self.sampling_rate, 
+                                        filter_type=filter_type, order=order)
+        self.filter_applied = True
+        self.filter_params = {
+            'lowcut': lowcut,
+            'highcut': highcut,
+            'filter_type': filter_type,
+            'order': order
+        }
+        print(f"✅ Filter applied successfully")
+    
+    def reset_filter(self, original_data):
+        """
+        Reset to original unfiltered data.
+        
+        Parameters:
+        -----------
+        original_data : pandas.DataFrame
+            Original unfiltered data
+        """
+        self.data = original_data.copy()
+        self.filter_applied = False
+        self.filter_params = {}
+        print("🔄 Reset to original unfiltered data")
+    
+    def plot_time_range(self, start_time, end_time, groups, title_suffix=""):
+        """
+        Plot differential signals for a specific time range with each group in its own subplot.
+        
+        Parameters:
+        -----------
+        start_time : float
+            Start time in seconds
+        end_time : float
+            End time in seconds  
+        groups : dict
+            Dictionary with group names as keys and list of (pin1, pin2) tuples as values
+        title_suffix : str
+            Additional text to add to the title
+        """
+        # Filter data for time range
+        time_mask = (self.data['time'] >= start_time) & (self.data['time'] <= end_time)
+        filtered_data = self.data[time_mask].copy()
+        
+        if len(filtered_data) == 0:
+            print(f"No data found in time range {start_time}-{end_time} seconds")
+            return None, None
+        
+        # Calculate subplot layout
+        n_groups = len(groups)
+        
+        # Create subplots - one for each group
+        fig, axes = plt.subplots(n_groups, 1, figsize=self.figsize_inches, 
+                               dpi=self.dpi, sharex=True)
+        
+        # Ensure axes is always a list
+        if n_groups == 1:
+            axes = [axes]
+        
+        # Process each group in its own subplot
+        for group_idx, (group_name, pin_pairs) in enumerate(groups.items()):
+            ax = axes[group_idx]
+            
+            # Track y-axis limits for this subplot
+            y_min_subplot = float('inf')
+            y_max_subplot = float('-inf')
+            
+            # Calculate vertical positions for differential pairs within this group
+            n_pairs = len(pin_pairs)
+            center_offset = (n_pairs - 1) * self.pair_spacing_uv / 2
+            
+            # Plot each differential pair in the group
+            for pair_idx, (pin1, pin2) in enumerate(pin_pairs):
+                pin1_name = f'pin_{pin1}'
+                pin2_name = f'pin_{pin2}'
+                
+                # Check if pins exist in data
+                if pin1_name in filtered_data.columns and pin2_name in filtered_data.columns:
+                    # Calculate differential signal
+                    diff_signal = filtered_data[pin1_name] - filtered_data[pin2_name]
+                    
+                    # Calculate vertical offset for this pair (1cm spacing)
+                    pair_offset = pair_idx * self.pair_spacing_uv - center_offset
+                    offset_signal = diff_signal + pair_offset
+                    
+                    # Select color
+                    color = self.colors[pair_idx % len(self.colors)]
+                    
+                    # Plot the signal
+                    ax.plot(filtered_data['time'], offset_signal, 
+                           linewidth=1.2, color=color, 
+                           label=f'{pin1_name}-{pin2_name}', 
+                           alpha=0.8)
+                    
+                    # Update subplot y limits
+                    y_min_subplot = min(y_min_subplot, offset_signal.min())
+                    y_max_subplot = max(y_max_subplot, offset_signal.max())
+                    
+                    # Add zero line for this differential pair
+                    ax.axhline(y=pair_offset, color='gray', linestyle='--', 
+                              alpha=0.4, linewidth=0.8)
+                
+                else:
+                    print(f"Warning: Pins {pin1_name} or {pin2_name} not found in data")
+            
+            # Configure this subplot
+            self._configure_subplot(ax, group_name, start_time, end_time, 
+                                  y_min_subplot, y_max_subplot)
+        
+        # Set x-axis label only on the bottom subplot
+        axes[-1].set_xlabel('Time (s)', fontsize=12, fontweight='bold')
+        
+        # Add overall title
+        filter_info = ""
+        if self.filter_applied:
+            params = self.filter_params
+            filter_info = f" | Filtered: {params['lowcut']}-{params['highcut']}Hz ({params['filter_type']})"
+        
+        title = (f'Differential EEG Signals by Groups ({start_time:.1f}-{end_time:.1f}s){filter_info}\\n'
+                f'Scale: 7µV = 1mm | Differential pairs spaced 1cm apart {title_suffix}')
+        fig.suptitle(title, fontsize=14, fontweight='bold')
+        
+        # Add info box on first subplot
+        self._add_info_box(axes[0], start_time, end_time, groups)
+        
+        # Adjust layout
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.90)
+        
+        return fig, axes
+    
+    def _configure_subplot(self, ax, group_name, start_time, end_time, y_min, y_max):
+        """Configure individual subplot properties."""
+        ax.set_ylabel(f'{group_name}\\nDifferential (7µV = 1mm)', fontsize=10, fontweight='bold')
+        ax.set_title(f'Group: {group_name}', fontsize=11, fontweight='bold')
+        
+        # Set axis limits
+        ax.set_xlim(start_time, end_time)
+        
+        if y_min != float('inf') and y_max != float('-inf'):
+            y_range = y_max - y_min
+            padding = max(y_range * 0.05, self.uv_per_mm)  # At least 1mm padding
+            ax.set_ylim(y_min - padding, y_max + padding)
+            
+            # Create custom y-axis ticks (every 1mm = 7µV)
+            tick_spacing_uv = self.uv_per_mm
+            y_tick_start = np.floor((y_min - padding) / tick_spacing_uv) * tick_spacing_uv
+            y_tick_end = np.ceil((y_max + padding) / tick_spacing_uv) * tick_spacing_uv
+            
+            y_ticks = np.arange(y_tick_start, y_tick_end + tick_spacing_uv, tick_spacing_uv)
+            ax.set_yticks(y_ticks)
+            
+            # Create tick labels with both µV and mm
+            y_tick_labels = []
+            for tick in y_ticks:
+                mm_value = tick / self.uv_per_mm
+                y_tick_labels.append(f'{tick:.0f}µV\\n({mm_value:.1f}mm)')
+            
+            ax.set_yticklabels(y_tick_labels, fontsize=8)
+        
+        # Add grid and styling
+        ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+        ax.set_facecolor('#fafafa')
+        ax.legend(loc='upper right', fontsize=8)
+    
+    def _add_info_box(self, ax, start_time, end_time, groups):
+        """Add information box to the plot."""
+        duration = end_time - start_time
+        total_pairs = sum(len(pairs) for pairs in groups.values())
+        
+        info_text = (f'📏 Scaling: 7µV = 1mm\\n'
+                    f'{filter_text}'
+                    f'📊 Duration: {duration:.1f}s\\n'
+                    f'🔗 Groups: {len(groups)}\\n'
+                    f'📈 Pairs: {total_pairs}')
+        
+        ax.text(0.02, 0.98, info_text, transform=ax.transAxes,
+               fontsize=9, verticalalignment='top',
+               bbox=dict(boxstyle='round,pad=0.5', facecolor='lightblue', alpha=0.8))
+    
+    def plot_multiple_chunks(self, start_time, end_time, chunk_duration, groups, overlap=0.0):
+        """
+        Plot multiple chunks with consistent scaling, each group in separate subplots.
+        
+        Parameters:
+        -----------
+        start_time : float
+            Start time in seconds
+        end_time : float
+            End time in seconds
+        chunk_duration : float
+            Duration of each chunk in seconds
+        groups : dict
+            Differential signal groups
+        overlap : float
+            Overlap between chunks (0-1)
+        """
+        # Create chunks
+        chunks = []
+        step_size = chunk_duration * (1 - overlap)
+        current_time = start_time
+        
+        while current_time + chunk_duration <= end_time:
+            chunks.append((current_time, current_time + chunk_duration))
+            current_time += step_size
+        
+        print(f"Created {len(chunks)} chunks of {chunk_duration}s each")
+        print(f"Each group will be displayed in its own subplot")
+        
+        # Plot each chunk
+        for i, (chunk_start, chunk_end) in enumerate(chunks):
+            title_suffix = f"| Chunk {i+1}/{len(chunks)}"
+            fig, axes = self.plot_time_range(chunk_start, chunk_end, groups, title_suffix)
+            if fig is not None:
+                plt.show()
+                
+                # Print chunk info
+                print(f"\\nChunk {i+1}: {chunk_start:.1f}-{chunk_end:.1f}s")
+                print(f"Groups displayed: {list(groups.keys())}")
+
+def apply_bandpass_filter(data, lowcut, highcut, fs=1000, order=4, filter_type='butterworth'):
+    """
+    Apply bandpass filter to EEG data.
+    
+    Parameters:
+    -----------
+    data : pandas.DataFrame or numpy.array
+        EEG data (if DataFrame, should have time column and pin columns)
+    lowcut : float
+        Low cutoff frequency in Hz
+    highcut : float
+        High cutoff frequency in Hz
+    fs : float
+        Sampling frequency in Hz (default: 1000)
+    order : int
+        Filter order (default: 4)
+    filter_type : str
+        Filter type: 'butterworth', 'elliptic', 'chebyshev1', 'chebyshev2' (default: 'butterworth')
+    
+    Returns:
+    --------
+    filtered_data : pandas.DataFrame or numpy.array
+        Filtered data with same structure as input
+    """
+    from scipy.signal import butter, ellip, cheby1, cheby2, filtfilt
+    import pandas as pd
+    import numpy as np
+    
+    # Validate frequency parameters
+    nyquist = fs / 2.0
+    if lowcut >= nyquist or highcut >= nyquist:
+        raise ValueError(f"Cutoff frequencies must be less than Nyquist frequency ({nyquist} Hz)")
+    if lowcut >= highcut:
+        raise ValueError("Low cutoff frequency must be less than high cutoff frequency")
+    
+    # Normalize frequencies
+    low = lowcut / nyquist
+    high = highcut / nyquist
+    
+    # Design filter based on type
+    if filter_type.lower() == 'butterworth':
+        b, a = butter(order, [low, high], btype='band')
+    elif filter_type.lower() == 'elliptic':
+        b, a = ellip(order, 1, 40, [low, high], btype='band')
+    elif filter_type.lower() == 'chebyshev1':
+        b, a = cheby1(order, 1, [low, high], btype='band')
+    elif filter_type.lower() == 'chebyshev2':
+        b, a = cheby2(order, 40, [low, high], btype='band')
+    else:
+        raise ValueError(f"Unknown filter type: {filter_type}")
+    
+    # Apply filter
+    if isinstance(data, pd.DataFrame):
+        # DataFrame input - filter pin columns
+        filtered_data = data.copy()
+        pin_columns = [col for col in data.columns if col.startswith('pin_')]
+        
+        print(f"🔧 Applying {filter_type} bandpass filter ({lowcut}-{highcut} Hz) to {len(pin_columns)} channels...")
+        
+        for pin_col in pin_columns:
+            # Apply zero-phase filtering to avoid phase distortion
+            filtered_data[pin_col] = filtfilt(b, a, data[pin_col].values)
+        
+        print(f"✅ Filtering completed successfully")
+        return filtered_data
+    
+    else:
+        # Array input
+        if data.ndim == 1:
+            return filtfilt(b, a, data)
+        else:
+            # Multi-channel array
+            filtered_data = np.zeros_like(data)
+            for i in range(data.shape[1]):
+                filtered_data[:, i] = filtfilt(b, a, data[:, i])
+            return filtered_data
+
+def get_eeg_frequency_bands():
+    """
+    Get standard EEG frequency bands for easy reference.
+    
+    Returns:
+    --------
+    dict : Dictionary of frequency bands with their ranges
+    """
+    return {
+        'delta': (0.5, 4.0),     # Deep sleep
+        'theta': (4.0, 8.0),     # Drowsiness, meditation
+        'alpha': (8.0, 13.0),    # Relaxed, eyes closed
+        'beta': (13.0, 30.0),    # Alert, active thinking
+        'gamma': (30.0, 100.0),  # High-level cognitive processing
+        'broadband': (0.5, 50.0), # General EEG analysis
+        'clinical': (0.5, 70.0),  # Clinical EEG
+        'artifacts': (50.0, 200.0) # High-frequency artifacts
+    }
+
+def print_filter_info():
+    """Print information about available filters and frequency bands."""
+    bands = get_eeg_frequency_bands()
+    
+    print("🧠 EEG Frequency Bands:")
+    for band_name, (low, high) in bands.items():
+        print(f"   • {band_name.capitalize()}: {low}-{high} Hz")
+    
+    print(f"\n🔧 Available Filter Types:")
+    print(f"   • butterworth: Maximally flat passband")
+    print(f"   • elliptic: Steep transition, some ripple")
+    print(f"   • chebyshev1: Ripple in passband")
+    print(f"   • chebyshev2: Ripple in stopband")
+    
+    print(f"\n💡 Usage Examples:")
+    print(f"   # Filter for alpha waves (8-13 Hz)")
+    print(f"   filtered_data = apply_bandpass_filter(data, 8, 13)")
+    print(f"   ")
+    print(f"   # Clinical EEG range")
+    print(f"   filtered_data = apply_bandpass_filter(data, 0.5, 70)")

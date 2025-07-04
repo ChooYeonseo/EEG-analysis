@@ -207,13 +207,13 @@ def load_experiment_data(experiment_dir):
 def rhd_folder_to_dataframe(folder_path, 
                             channel_names=None, 
                             resample_rate=None,
-                            hk=True, 
+                            hk=False, 
                             hk_params={"env_threshold": 5,
                                        "kurtosis_threshold":3,
                                        "window_size":2.0,  # 1 second window
                                        "step_size":1,    # 0.5 second step
                                        "interpolate":True},
-                            interpolate=True):
+                            interpolate=False):
     """
     Convert all RHD files in a folder to a single pandas DataFrame.
     
@@ -557,6 +557,29 @@ def numpy_to_dataframe(numpy_data):
     
     # print(f"✓ Converted numpy data back to DataFrame: {df.shape}")
     return df
+
+def rhd2dataframe(folder_path, pinmap):
+    """
+    Convert RHD files in a folder to a pandas DataFrame.
+    
+    Parameters:
+    -----------
+    folder_path : str
+        Path to folder containing RHD files
+    pinmap : dict
+        Mapping from pin numbers to Intan input names
+        
+    Returns:
+    --------
+    df : pandas.DataFrame
+        DataFrame with 'time' column and columns for each channel
+    """
+    df, metadata = rhd_folder_to_dataframe(folder_path)
+    
+    # Convert channel names to pin names
+    df = convert_channels_to_pins(df, pin_map=pinmap)
+    
+    return df, metadata
 
 
 def save_experiment_numpy(folder_path, 

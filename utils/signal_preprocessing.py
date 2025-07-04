@@ -15,6 +15,37 @@ from scipy.stats import kurtosis
 import warnings
 warnings.filterwarnings('ignore')
 
+def get_mosaic_df(data, Mosaic_groups):
+    """
+    Convert a list of dictionaries to a pandas DataFrame.
+    
+    Parameters:
+    -----------
+    data : list of dict
+        List of dictionaries with keys as column names
+    Mosaic_list : list
+        List of column names to include in the DataFrame
+    
+    Returns:
+    --------
+    df : pandas.DataFrame
+        DataFrame with specified columns
+    """
+    output_dict = {}
+    key_list = list(Mosaic_groups.keys())
+
+    for key in list(Mosaic_groups.keys()):
+        Mosaic_list = Mosaic_groups[key]
+        output_df = pd.DataFrame()    
+        output_df['time'] = data['time']
+        for i in Mosaic_list:
+            interest_pin = "pin_" + str(i[0])
+            reference_pin = "pin_" + str(i[1])
+            output_df[interest_pin + "-" + reference_pin] = data[interest_pin] - data[reference_pin]
+        output_dict[key] = output_df
+        
+    
+    return output_dict
 
 def get_sampling_rate(data):
     """
@@ -39,6 +70,46 @@ def get_sampling_rate(data):
     
     print(f"Estimated sampling rate: {fs:.1f} Hz")
     return fs
+
+def resample_dataframe(data, target_rate, original_rate=None):
+    """
+    Resample a DataFrame to a different sampling rate.
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        DataFrame with time and channel data
+    original_rate : float
+        Original sampling rate in Hz
+    target_rate : float
+        Target sampling rate in Hz
+        
+    Returns:
+    --------
+    resampled_df : pandas.DataFrame
+        Resampled DataFrame
+    """
+    
+    # Calculate resampling factor
+    if original_rate is None:
+        original_rate = get_sampling_rate(data)
+        
+    resample_factor = target_rate / original_rate
+    new_length = int(len(data) * resample_factor)
+    
+    # Create new time vector
+    new_time = np.linspace(data['time'].iloc[0], data['time'].iloc[-1], new_length)
+    
+    # Resample each channel
+    resampled_data = {'time': new_time}
+    
+    for column in tqdm(data.columns):
+        if column != 'time':
+            # Use scipy's resample function
+            resampled_channel = signal.resample(data[column].values, new_length)
+            resampled_data[column] = resampled_channel
+    
+    return pd.DataFrame(resampled_data)
 
 def bandpass_filter(data, lowcut, highcut, fs=None, order=4):
     """
